@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <cuda_runtime.h>
+#include <stdlib.h>
 
 #define BLOCK_SIZE 256
 
@@ -28,21 +29,22 @@ __global__ void simpleReductionKernel(int *input, int *output, int N) {
 }
 
 int main(){
-    int N = 1 << 20; // 1 Million elements
+    int N = 1 << 20; // 1<<20 = 1,048,576 elements
     int size = N * sizeof(int);
     int numBlocks = (N + BLOCK_SIZE - 1) / BLOCK_SIZE;
     
     int *h_input = (int*) malloc(size);
-    int *h_output = (int*) malloc(numBlocks * sizeof(int));
+    // We'll have one partial sum per block.
+    int *h_partialSums = (int*) malloc(numBlocks * sizeof(int));
 
     // Initialize input array (all ones).
     for (int i = 0; i < N; i++) {
         h_input[i] = 1;
     }
 
-    int *d_input, *d_output;
+    int *d_input, *d_partialSums;
     cudaMalloc(&d_input, size);
-    cudaMalloc(&d_output, numBlocks * sizeof(int));
+    cudaMalloc(&d_partialSums, numBlocks * sizeof(int));
 
     cudaMemcpy(d_input, h_input, size, cudaMemcpyHostToDevice);
 
@@ -53,7 +55,7 @@ int main(){
     cudaEventRecord(start);
 
     // Launch kernel for block-level reduction.
-    simpleReductionKernel<<<numBlocks, BLOCK_SIZE>>>(d_input, d_output, N);
+    simpleReductionKernel<<<numBlocks, BLOCK_SIZE>>>(d_input, d_partialSums, N);
 
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
@@ -62,18 +64,18 @@ int main(){
     printf("Time elapsed for simpleReduction kernel: %f ms\n", elapsedTime);
 
     // Copy partial results back to host and perform final reduction on CPU.
-    cudaMemcpy(h_output, d_output, numBlocks * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_partialSums, d_partialSums, numBlocks * sizeof(int), cudaMemcpyDeviceToHost);
     int total = 0;
     for (int i = 0; i < numBlocks; i++){
-        total += h_output[i];
+        total += h_partialSums[i];
     }
-    printf("Total Sum: %d\n", total);
+    printf("Total Sum: %d (expected %d)\n", total, N);
 
     // Cleanup.
     cudaFree(d_input);
-    cudaFree(d_output);
+    cudaFree(d_partialSums);
     free(h_input);
-    free(h_output);
+    free(h_partialSums);
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
 
