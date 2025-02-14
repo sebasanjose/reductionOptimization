@@ -1,72 +1,81 @@
 #include <stdio.h>
+#include <cuda_runtime.h>
 
-__global__ void sumReduction(int *input, int *output, int N) {
-    __shared__ int sharedMem[256]; // Shared memory for block-level reduction
+#define BLOCK_SIZE 256
 
+// Simple parallel reduction kernel using shared memory.
+__global__ void simpleReductionKernel(int *input, int *output, int N) {
+    __shared__ int sharedMem[BLOCK_SIZE];
     int tid = threadIdx.x;
-    int index = blockIdx.x * blockDim.x + tid;
+    int i = blockIdx.x * blockDim.x + tid;
+    
+    // Load data from global memory into shared memory.
+    sharedMem[tid] = (i < N) ? input[i] : 0;
+    __syncthreads();
 
-    // Load elements into shared memory
-    sharedMem[tid] = (index < N) ? input[index] : 0;
-    __syncthreads(); // Ensure all threads have loaded their values before proceeding
-
-    // Perform parallel reduction
+    // Perform reduction in shared memory.
     for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
-        if (tid < stride) {
+        if(tid < stride) {
             sharedMem[tid] += sharedMem[tid + stride];
         }
-        __syncthreads(); // Synchronize after each reduction step
+        __syncthreads();
     }
-
-    // Store the block's partial sum in global memory
-    if (tid == 0) {
+    
+    // Write the block's sum to global memory.
+    if(tid == 0) {
         output[blockIdx.x] = sharedMem[0];
     }
 }
 
-int main() {
-    int N = 1024; // Array size
-    int blockSize = 256; // Threads per block
-    int numBlocks = (N + blockSize - 1) / blockSize; // Grid size
+int main(){
+    int N = 1 << 20; // 1 Million elements
+    int size = N * sizeof(int);
+    int numBlocks = (N + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    
+    int *h_input = (int*) malloc(size);
+    int *h_output = (int*) malloc(numBlocks * sizeof(int));
 
-    int *h_input, *h_output;
-    int *d_input, *d_output;
-
-    // Allocate memory on host
-    h_input = (int*) malloc(N * sizeof(int));
-    h_output = (int*) malloc(numBlocks * sizeof(int));
-
-    // Initialize input array
+    // Initialize input array (all ones).
     for (int i = 0; i < N; i++) {
-        h_input[i] = 1; // Example: all elements are 1, so sum should be N
+        h_input[i] = 1;
     }
 
-    // Allocate memory on GPU
-    cudaMalloc(&d_input, N * sizeof(int));
+    int *d_input, *d_output;
+    cudaMalloc(&d_input, size);
     cudaMalloc(&d_output, numBlocks * sizeof(int));
 
-    // Copy data to GPU
-    cudaMemcpy(d_input, h_input, N * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_input, h_input, size, cudaMemcpyHostToDevice);
 
-    // Launch the kernel
-    sumReduction<<<numBlocks, blockSize>>>(d_input, d_output, N);
+    // Create CUDA events for timing.
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start);
 
-    // Copy result back to host
+    // Launch kernel for block-level reduction.
+    simpleReductionKernel<<<numBlocks, BLOCK_SIZE>>>(d_input, d_output, N);
+
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    float elapsedTime;
+    cudaEventElapsedTime(&elapsedTime, start, stop);
+    printf("Time elapsed for simpleReduction kernel: %f ms\n", elapsedTime);
+
+    // Copy partial results back to host and perform final reduction on CPU.
     cudaMemcpy(h_output, d_output, numBlocks * sizeof(int), cudaMemcpyDeviceToHost);
-
-    // Final summation on CPU
-    int totalSum = 0;
-    for (int i = 0; i < numBlocks; i++) {
-        totalSum += h_output[i];
+    int total = 0;
+    for (int i = 0; i < numBlocks; i++){
+        total += h_output[i];
     }
+    printf("Total Sum: %d\n", total);
 
-    printf("Total Sum: %d\n", totalSum); // Should print 1024 if all elements are 1
-
-    // Free memory
+    // Cleanup.
     cudaFree(d_input);
     cudaFree(d_output);
     free(h_input);
     free(h_output);
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
 
     return 0;
 }
