@@ -52,16 +52,19 @@ Below is a rough hypothetical performance summary for summing an array of 1 mill
 ### 1. Simple Parallel Reduction (Shared Memory)
 - Uses `__shared__` memory for local block reduction, improving performance over direct global memory access.
 - `__syncthreads()` ensures thread synchronization within the block.
+- Sample code: [simpleReduction.cu](https://github.com/sebasanjose/reductionOptimization/blob/main/simpleReduction.cu)
 
 ### 2. Multi-Block Reduction
 - Uses multiple kernels to handle block-level reductions, making it scalable for large arrays.
+- Sample code: [multiBlockReduction.cu](https://github.com/sebasanjose/reductionOptimization/blob/main/multiBlockReduction.cu)
 
 ### 3. Warp Shuffle Reduction
 - Uses warp shuffle instructions (`__shfl_down_sync`) to minimize shared memory overhead.
 - Works best when data fits into warp-sized operations (32 threads per warp).
+- Sample code: [warpShuffleReduction.cu](https://github.com/sebasanjose/reductionOptimization/blob/main/warpShuffleReduction.cu)
 
 ## Conclusion
-Memory optimization in CUDA involves minimizing latency and maximizing throughput.
+Memory optimization in CUDA involves minimizing latency and maximizing throughput. Whether you use Shared Memory or warp shuffle instructions, each approach can significantly speed up your kernels if used appropriately. For large-scale data, combining multiple levels of reduction is often essential.
 
 ### Key Recommendations
 1. Start with **Shared Memory** optimizations for a major performance boost.
