@@ -3,13 +3,15 @@
 #include <stdlib.h>
 
 #define BLOCK_SIZE 256
+// Increase dataset size.
+#define N (1 << 26)  // 67,108,864 elements
 
 // Kernel: simple reduction within a block using shared memory.
-__global__ void simpleReductionKernel(int *input, int *output, int N) {
+__global__ void simpleReductionKernel(int *input, int *output, int n) {
     __shared__ int sharedMem[BLOCK_SIZE];
     int tid = threadIdx.x;
     int i = blockIdx.x * blockDim.x + tid;
-    sharedMem[tid] = (i < N) ? input[i] : 0;
+    sharedMem[tid] = (i < n) ? input[i] : 0;
     __syncthreads();
     
     for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
@@ -25,7 +27,6 @@ __global__ void simpleReductionKernel(int *input, int *output, int N) {
 }
 
 int main(){
-    int N = 1 << 20; // 1,048,576 elements
     int size = N * sizeof(int);
     int numBlocks = (N + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
@@ -51,9 +52,9 @@ int main(){
     // Launch the kernel.
     simpleReductionKernel<<<numBlocks, BLOCK_SIZE>>>(d_input, d_output, N);
 
-    // Copy block-level partial sums back and finish the reduction on CPU.
+    // Copy partial sums back and finish the reduction on CPU.
     cudaMemcpy(h_partialSums, d_output, numBlocks * sizeof(int), cudaMemcpyDeviceToHost);
-    int total = 0;
+    long long total = 0;
     for (int i = 0; i < numBlocks; i++){
         total += h_partialSums[i];
     }
@@ -63,7 +64,7 @@ int main(){
     float elapsedTime_total;
     cudaEventElapsedTime(&elapsedTime_total, start_total, stop_total);
     printf("Total elapsed time for simpleReduction: %f ms\n", elapsedTime_total);
-    printf("Total Sum: %d (expected %d)\n", total, N);
+    printf("Total Sum: %lld (expected %d)\n", total, N);
 
     // Cleanup.
     cudaFree(d_input);
