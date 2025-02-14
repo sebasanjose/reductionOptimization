@@ -7,6 +7,11 @@ As I practice CUDA, I see the importance of using the right type of memory. Opti
 2. **Multi-Block Reduction**: Two different kernels handle block-wise reduction for better scalability.
 3. **Warp Shuffle Instructions**: Shared memory usage is eliminated within a warp, moving computations into registers for better performance.
 
+<p align="center">
+  <img src="images/reductionOutputs.png" alt="Description of the image" width="600" />
+</p>
+
+
 ## Why Memory Optimization Matters
 GPUs excel at parallel computation, but memory access patterns can make or break performance. The key is minimizing latency and maximizing throughput by using the most appropriate memory type for your workload.
 
