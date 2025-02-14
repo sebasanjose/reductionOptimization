@@ -2,14 +2,16 @@
 #include <cuda_runtime.h>
 #include <stdlib.h>
 
-#define BLOCK_SIZE 256  // Threads per block
+#define BLOCK_SIZE 256
+// Increase dataset size.
+#define N (1 << 26)  // 67,108,864 elements
 
 // Kernel: block-level reduction using shared memory.
-__global__ void sumReduction(int *input, int *output, int N) {
+__global__ void sumReduction(int *input, int *output, int n) {
     __shared__ int sharedMem[BLOCK_SIZE];
     int tid = threadIdx.x;
     int index = blockIdx.x * blockDim.x + tid;
-    sharedMem[tid] = (index < N) ? input[index] : 0;
+    sharedMem[tid] = (index < n) ? input[index] : 0;
     __syncthreads();
     
     for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
@@ -24,12 +26,12 @@ __global__ void sumReduction(int *input, int *output, int N) {
     }
 }
 
-// Kernel: final reduction kernel (same idea as above).
-__global__ void finalReduction(int *input, int *output, int N) {
+// Kernel: final reduction kernel (shared memory version).
+__global__ void finalReduction(int *input, int *output, int n) {
     __shared__ int sharedMem[BLOCK_SIZE];
     int tid = threadIdx.x;
-    int index = tid;  // Only one block is expected to launch this kernel.
-    sharedMem[tid] = (index < N) ? input[index] : 0;
+    int index = tid;  // each block processes one “row” of the reduction.
+    sharedMem[tid] = (index < n) ? input[index] : 0;
     __syncthreads();
     
     for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
@@ -54,7 +56,6 @@ int nextPow2(int x) {
 }
 
 int main(){
-    int N = 1 << 20;  // 1,048,576 elements
     int blockSize = BLOCK_SIZE;
     int numBlocks = (N + blockSize - 1) / blockSize;
 
@@ -86,7 +87,7 @@ int main(){
     int *d_out;
     cudaMalloc(&d_out, numBlocks * sizeof(int));
     while(n > 1) {
-        int threads = (n < BLOCK_SIZE) ? nextPow2(n) : BLOCK_SIZE;
+        int threads = (n < blockSize) ? nextPow2(n) : blockSize;
         int blocks = (n + threads - 1) / threads;
         finalReduction<<<blocks, threads>>>(d_in, d_out, n);
         n = blocks;
@@ -101,9 +102,10 @@ int main(){
     cudaEventElapsedTime(&elapsedTime_total, start_total, stop_total);
 
     // Copy the final result back.
-    cudaMemcpy(h_result, d_in, sizeof(int), cudaMemcpyDeviceToHost);
+    int result;
+    cudaMemcpy(&result, d_in, sizeof(int), cudaMemcpyDeviceToHost);
     printf("Total elapsed time for multiBlockReduction: %f ms\n", elapsedTime_total);
-    printf("Total Sum: %d (expected %d)\n", *h_result, N);
+    printf("Total Sum: %d (expected %d)\n", result, N);
 
     // Cleanup.
     cudaFree(d_input);

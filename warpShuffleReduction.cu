@@ -2,7 +2,9 @@
 #include <cuda_runtime.h>
 #include <stdlib.h>
 
-#define BLOCK_SIZE 256  // Threads per block
+#define BLOCK_SIZE 256
+// Increase dataset size.
+#define N (1 << 26)  // 67,108,864 elements
 
 // Utility: warp-level reduction using shuffle.
 __inline__ __device__ int warpReduceSum(int val) {
@@ -12,16 +14,16 @@ __inline__ __device__ int warpReduceSum(int val) {
     return val;
 }
 
-// Kernel: block-level reduction using warp shuffle.
-__global__ void sumReduction(int *input, int *output, int N) {
-    // For the first kernel we know blockDim.x == BLOCK_SIZE.
+// Kernel: block-level reduction using warp shuffles.
+__global__ void sumReduction(int *input, int *output, int n) {
+    // Each block uses a fixed BLOCK_SIZE.
     __shared__ int sharedMem[BLOCK_SIZE / 32];  // one element per warp
     int tid = threadIdx.x;
     int index = blockIdx.x * blockDim.x + tid;
     int lane = tid % 32;    // index within warp
     int warpId = tid / 32;  // warp index within block
 
-    int sum = (index < N) ? input[index] : 0;
+    int sum = (index < n) ? input[index] : 0;
     sum = warpReduceSum(sum);
 
     if (lane == 0) {
@@ -30,7 +32,7 @@ __global__ void sumReduction(int *input, int *output, int N) {
     __syncthreads();
 
     if (warpId == 0) {
-        int numWarps = BLOCK_SIZE / 32;  // fixed here since BLOCK_SIZE is constant
+        int numWarps = BLOCK_SIZE / 32;
         sum = (tid < numWarps) ? sharedMem[lane] : 0;
         sum = warpReduceSum(sum);
     }
@@ -39,16 +41,15 @@ __global__ void sumReduction(int *input, int *output, int N) {
     }
 }
 
-// Kernel: final reduction using warp shuffles.
-// Uses dynamic shared memory; the size is determined at launch.
-__global__ void finalReductionWarp(int *input, int *output, int N) {
-    extern __shared__ int sharedMem[]; // dynamic shared memory: one int per active warp
+// Kernel: final reduction using warp shuffles with dynamic shared memory.
+__global__ void finalReductionWarp(int *input, int *output, int n) {
+    extern __shared__ int sharedMem[]; // one int per active warp
     int tid = threadIdx.x;
     int index = blockIdx.x * blockDim.x + tid;
     int lane = tid % 32;
     int warpId = tid / 32;
 
-    int sum = (index < N) ? input[index] : 0;
+    int sum = (index < n) ? input[index] : 0;
     sum = warpReduceSum(sum);
 
     if (lane == 0) {
@@ -76,13 +77,11 @@ int nextPow2(int x) {
 }
 
 int main(){
-    int N = 1 << 20;  // 1,048,576 elements
     int blockSize = BLOCK_SIZE;
     int numBlocks = (N + blockSize - 1) / blockSize;
 
     // Allocate and initialize host memory.
     int *h_input = (int*) malloc(N * sizeof(int));
-    int *h_result = (int*) malloc(sizeof(int));
     for (int i = 0; i < N; i++){
         h_input[i] = 1;
     }
@@ -108,7 +107,7 @@ int main(){
     int *d_out;
     cudaMalloc(&d_out, numBlocks * sizeof(int));
     while(n > 1) {
-        int threads = (n < BLOCK_SIZE) ? nextPow2(n) : BLOCK_SIZE;
+        int threads = (n < blockSize) ? nextPow2(n) : blockSize;
         int blocks = (n + threads - 1) / threads;
         // Compute dynamic shared memory size: one int per active warp.
         int sharedMemSize = ((threads + 31) / 32) * sizeof(int);
@@ -124,16 +123,16 @@ int main(){
     float elapsedTime_total;
     cudaEventElapsedTime(&elapsedTime_total, start_total, stop_total);
 
-    cudaMemcpy(h_result, d_in, sizeof(int), cudaMemcpyDeviceToHost);
+    int result;
+    cudaMemcpy(&result, d_in, sizeof(int), cudaMemcpyDeviceToHost);
     printf("Total elapsed time for warpShuffleReduction: %f ms\n", elapsedTime_total);
-    printf("Total Sum: %d (expected %d)\n", *h_result, N);
+    printf("Total Sum: %d (expected %d)\n", result, N);
 
     // Cleanup.
     cudaFree(d_input);
     cudaFree(d_partialSums);
     cudaFree(d_out);
     free(h_input);
-    free(h_result);
     cudaEventDestroy(start_total);
     cudaEventDestroy(stop_total);
     return 0;
